@@ -1,65 +1,219 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Teachable Machine Image Model</title>
+    <title>Teachable Machine Animal Quiz</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        .quiz-container { max-width: 600px; margin: 30px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        .image-display { margin-bottom: 20px; }
+        .image-display img { max-width: 100%; height: 250px; object-fit: contain; border: 1px solid #ddd; border-radius: 4px; }
+        .options-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+        .option-button { padding: 10px 20px; font-size: 16px; cursor: pointer; border: 2px solid #007bff; background-color: #fff; color: #007bff; border-radius: 5px; transition: background-color 0.3s; }
+        .option-button:hover:not(:disabled) { background-color: #007bff; color: white; }
+        .option-button:disabled { cursor: not-allowed; opacity: 0.6; }
+        .feedback { margin-top: 15px; font-weight: bold; }
+    </style>
 </head>
 <body>
-    <div>Teachable Machine Image Model</div>
-    <button type="button" onclick="init()">Start</button>
-    <div id="webcam-container"></div>
-    <div id="label-container"></div>
+
+    <div class="quiz-container">
+        <h1>Animal Classification Quiz</h1>
+        <h2 id="score-display">Score: 0</h2>
+        <h3 id="hint-display"></h3>
+
+        <div class="image-display">
+            <img id="question-image" src="" alt="Animal to classify" style="display:none;">
+            <p id="status-message">Loading model...</p>
+        </div>
+
+        <div id="options-container" class="options-container">
+            </div>
+
+        <div id="feedback-container" class="feedback"></div>
+        <button id="next-button" onclick="nextQuestion()" style="display:none; margin-top: 20px;">Next Question</button>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
-    
     <script type="text/javascript">
-        // The link to your model provided by Teachable Machine export panel
+        // --- 1. MODEL SETUP ---
         const URL = "https://teachablemachine.withgoogle.com/models/AIJFupQNV/";
+        let model;
 
-        let model, webcam, labelContainer, maxPredictions;
+        // --- 2. GAME VARIABLES ---
+        let currentQuestionIndex = 0;
+        let score = 0;
+        let isAnswered = false;
 
-        // Load the image model and setup the webcam
+        // IMPORTANT: Update these to match your 5 animal classes EXACTLY
+        const ALL_CLASSES = ["Cat", "Dog", "Rabbit", "Bird", "Fish"]; 
+
+        // Quiz Questions: Using a flat path (no 'images/' prefix) to make Netlify deployment easier
+        const quizData = [
+            // IMPORTANT: Replace these file paths with the exact names of your dropped image files
+            // You will place these files directly next to index.html
+            { file: "cat_pic_1.jpg", hint: "A common house pet known for purring." },
+            { file: "dog_pic_2.png", hint: "Often called 'man's best friend'." },
+            { file: "rabbit_pic_3.gif", hint: "Has long ears and hops." },
+            { file: "bird_pic_4.jpg", hint: "Can fly and build nests." },
+            { file: "fish_pic_5.jpg", hint: "Swims in water and has gills." },
+        ];
+        
+        // Randomly shuffle the quiz questions
+        quizData.sort(() => Math.random() - 0.5);
+
+        // --- 3. CORE FUNCTIONS ---
+
+        // Called automatically on page load
         async function init() {
             const modelURL = URL + "model.json";
             const metadataURL = URL + "metadata.json";
 
-            // Load the model and metadata
-            model = await tmImage.load(modelURL, metadataURL);
-            maxPredictions = model.getTotalClasses();
-
-            // Convenience function to setup a webcam
-            const flip = true; // whether to flip the webcam
-            webcam = new tmImage.Webcam(200, 200, flip); // width, height, flip
-            await webcam.setup(); // request access to the webcam
-            await webcam.play();
-            window.requestAnimationFrame(loop);
-
-            // append elements to the DOM
-            document.getElementById("webcam-container").appendChild(webcam.canvas);
-            labelContainer = document.getElementById("label-container");
-            for (let i = 0; i < maxPredictions; i++) { // and class labels
-                labelContainer.appendChild(document.createElement("div"));
+            document.getElementById('status-message').innerHTML = "Loading model...";
+            
+            try {
+                model = await tmImage.load(modelURL, metadataURL);
+                document.getElementById('status-message').innerHTML = "Model loaded. Starting quiz...";
+                
+                // Once the model is loaded, start the first question
+                startQuiz();
+            } catch (error) {
+                document.getElementById('status-message').innerHTML = "Error loading model. Check your Teachable Machine link or internet connection.";
+                console.error("Model Loading Error:", error);
             }
         }
 
-        async function loop() {
-            webcam.update(); // update the webcam frame
-            await predict();
-            window.requestAnimationFrame(loop);
+        // Start the quiz or move to the next question
+        function startQuiz() {
+            currentQuestionIndex = 0;
+            score = 0;
+            document.getElementById('score-display').innerHTML = `Score: ${score}`;
+            document.getElementById('status-message').style.display = 'none';
+            document.getElementById('question-image').style.display = 'block';
+            nextQuestion();
         }
 
-        // Run the webcam image through the image model
-        async function predict() {
-            // predict can take in an image, video or canvas html element
-            const prediction = await model.predict(webcam.canvas);
-            for (let i = 0; i < maxPredictions; i++) {
-                const classPrediction =
-                    prediction[i].className + ": " + prediction[i].probability.toFixed(2);
-                labelContainer.childNodes[i].innerHTML = classPrediction;
+        function nextQuestion() {
+            if (currentQuestionIndex >= quizData.length) {
+                endGame();
+                return;
             }
+            
+            isAnswered = false;
+            document.getElementById('feedback-container').innerHTML = '';
+            document.getElementById('next-button').style.display = 'none';
+            
+            const currentQuestion = quizData[currentQuestionIndex];
+            
+            // Display the image and hint
+            document.getElementById('question-image').src = currentQuestion.file;
+            document.getElementById('hint-display').innerHTML = `Hint: ${currentQuestion.hint}`;
+            
+            // Determine the correct class for generating options
+            // This is a simple (but potentially risky) way to get the correct class name
+            let correctClass = ALL_CLASSES.find(cls => currentQuestion.file.toLowerCase().includes(cls.toLowerCase()));
+            
+            // Fallback for better error handling if the file name doesn't match a class
+            if (!correctClass) {
+                console.error(`ERROR: Could not find a matching class for file: ${currentQuestion.file}. Using 'Cat' as fallback.`);
+                correctClass = "Cat"; 
+            }
+
+            let options = [correctClass];
+            let wrongClasses = ALL_CLASSES.filter(cls => cls !== correctClass);
+            
+            // Randomly pick 3 wrong answers (distractors)
+            let distractors = [];
+            while (distractors.length < 3 && wrongClasses.length > 0) {
+                const randomIndex = Math.floor(Math.random() * wrongClasses.length);
+                distractors.push(wrongClasses.splice(randomIndex, 1)[0]);
+            }
+            options = options.concat(distractors);
+
+            // Shuffle the options before displaying
+            options.sort(() => Math.random() - 0.5);
+            
+            // Display the buttons
+            const optionsContainer = document.getElementById('options-container');
+            optionsContainer.innerHTML = '';
+            options.forEach(option => {
+                const button = document.createElement('button');
+                button.className = 'option-button';
+                button.innerHTML = option;
+                button.onclick = () => checkAnswer(button, option);
+                optionsContainer.appendChild(button);
+            });
+            
+            currentQuestionIndex++;
         }
+
+        // Check the user's selected answer
+        async function checkAnswer(clickedButton, selectedClass) {
+            if (isAnswered) return;
+            isAnswered = true;
+
+            // Disable all buttons
+            document.querySelectorAll('.option-button').forEach(btn => btn.disabled = true);
+
+            const img = document.getElementById('question-image');
+            
+            // --- MAKING THE PREDICTION ---
+            // The model is run on the image displayed in the element with ID 'question-image'
+            const prediction = await model.predict(img);
+            
+            // Find the predicted class with the highest probability
+            const correctPrediction = prediction.reduce((prev, current) => 
+                (prev.probability > current.probability) ? prev : current
+            );
+
+            // Get the name of the most probable class (what the model thinks it is)
+            const modelAnswer = correctPrediction.className;
+            
+            const feedbackContainer = document.getElementById('feedback-container');
+
+            if (selectedClass === modelAnswer) {
+                // Correct Answer
+                score += 1;
+                feedbackContainer.innerHTML = `🎉 Correct! The model predicted: **${modelAnswer}** (+1 Point)`;
+                clickedButton.style.backgroundColor = '#28a745'; // Green for correct
+                clickedButton.style.borderColor = '#28a745';
+                clickedButton.style.color = 'white';
+            } else {
+                // Incorrect Answer
+                feedbackContainer.innerHTML = `❌ Incorrect. The model predicted: **${modelAnswer}** (0 Points)`;
+                clickedButton.style.backgroundColor = '#dc3545'; // Red for incorrect
+                clickedButton.style.borderColor = '#dc3545';
+                clickedButton.style.color = 'white';
+                
+                // Highlight the true correct button (as predicted by the model)
+                document.querySelectorAll('.option-button').forEach(btn => {
+                    if (btn.innerHTML === modelAnswer) {
+                        btn.style.backgroundColor = '#28a745';
+                        btn.style.borderColor = '#28a745';
+                        btn.style.color = 'white';
+                    }
+                });
+            }
+
+            document.getElementById('score-display').innerHTML = `Score: ${score}`;
+            document.getElementById('next-button').style.display = 'block';
+        }
+
+        function endGame() {
+            document.getElementById('question-image').style.display = 'none';
+            document.getElementById('hint-display').innerHTML = '';
+            document.getElementById('options-container').innerHTML = '';
+            document.getElementById('next-button').style.display = 'none';
+            document.getElementById('feedback-container').innerHTML = `
+                <h2>Game Over!</h2>
+                <p>Your final score is: **${score}** out of ${quizData.length}</p>
+                <button class='option-button' onclick="startQuiz()">Play Again</button>
+            `;
+        }
+        
+        // This is the essential fix: call init() to start the entire process.
+        init();
+
     </script>
 </body>
 </html>
